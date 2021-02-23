@@ -38,7 +38,7 @@ impl Core for Game {
             return;
         }
 
-        let iterations = 100;
+        let iterations = 1000;
 
         for _ in 0..iterations {
             let index = self.random_range(0, self.vertices.len() as isize);
@@ -50,6 +50,10 @@ impl Core for Game {
 
             self.points.push(result);
             self.last = Vector2::new(result.x, result.y);
+
+            if self.points.len() >= self.max {
+                return;
+            }
         }
     }
     fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
@@ -68,10 +72,26 @@ impl Core for Game {
 }
 
 impl Game {
-    pub fn new() -> Self {
-        let n = 6;
-        let r = 1.0 / 3.0;
-        let maximum = 60000;
+    pub fn new(mut args: std::env::Args) -> Self {
+        args.next();
+
+        let n = args
+            .next()
+            .unwrap_or(String::from("6"))
+            .parse::<usize>()
+            .unwrap_or(6);
+
+        let r = args
+            .next()
+            .unwrap_or(String::from("0.333333"))
+            .parse::<f32>()
+            .unwrap_or(0.333333);
+
+        let max = args
+            .next()
+            .unwrap_or(String::from("10000"))
+            .parse::<usize>()
+            .unwrap_or(10000);
 
         Game {
             camera: Camera2D {
@@ -84,8 +104,8 @@ impl Game {
             last: Vector2::new(0.0, 0.0),
             n,
             r: 1.0 - r,
-            max: maximum,
-            vertices: Vec::with_capacity(maximum),
+            max,
+            vertices: Vec::with_capacity(max),
             points: Vec::with_capacity(n),
         }
     }

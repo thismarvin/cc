@@ -8,7 +8,7 @@ fn main() {
     config.title = "Chaos Game";
     config.window_size = (600, 600);
     config.vsync_enabled = true;
-    config.core = Some(Box::new(Game::new()));
+    config.core = Some(Box::new(Game::new(std::env::args())));
 
     App::build(config).run();
 }
