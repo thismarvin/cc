@@ -1,0 +1,12 @@
+[package]
+name = "chaos-game"
+version = "0.1.0"
+authors = ["marvin <marvin@thismarvin.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+raylib = "3.5"
+rand = "0.8.3"
+rna = { path = "../rna" }
