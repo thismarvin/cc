@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+	"rna",
+	"template"
+]
