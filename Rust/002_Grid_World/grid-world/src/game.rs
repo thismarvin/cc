@@ -28,6 +28,7 @@ struct World {
     width: usize,
     height: usize,
     board: Vec<usize>,
+    values: Vec<f32>,
 }
 
 impl World {
@@ -36,6 +37,7 @@ impl World {
             width,
             height,
             board: vec![0; width * height],
+            values: vec![0.0; width * height],
         }
     }
 
@@ -84,7 +86,9 @@ impl Core for Game {
     fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {
         for y in 0..self.world.height {
             for x in 0..self.world.width {
-                print!("{:5.2}, ", self.value(State::new(x, y), self.k));
+                let value = self.value(State::new(x, y), self.k);
+                self.world.values[y * self.world.width + x] = value;
+                print!("{:5.2}, ", value);
             }
             println!();
         }
@@ -93,6 +97,63 @@ impl Core for Game {
     fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
         let mut d = d.begin_mode2D(self.camera);
         d.clear_background(Color::new(41, 173, 255, 255));
+
+        let mut max = std::f32::MIN;
+        for value in self.world.values.iter() {
+            if *value > max {
+                max = *value;
+            }
+        }
+
+        let mut min = std::f32::MAX;
+        for value in self.world.values.iter() {
+            if *value < min {
+                min = *value;
+            }
+        }
+
+        let size = 100;
+        let margin = size as f64 * 0.05;
+
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let value = self.world.values[y * self.world.width + x];
+                let color;
+                if value < 0.0 {
+                    color = Color::new(
+                        rna::remap_range(value as f64, min as f64, 0.0, 255.0, 0.0) as u8,
+                        0,
+                        0,
+                        255,
+                    );
+                } else {
+                    color = Color::new(
+                        0,
+                        rna::remap_range(value as f64, 0.0, max as f64, 0.0, 255.0) as u8,
+                        0,
+                        255,
+                    );
+                }
+
+                d.draw_rectangle(
+                    x as i32 * size,
+                    y as i32 * size,
+                    (size as f64 - margin) as i32,
+                    (size as f64 - margin) as i32,
+                    color,
+                );
+
+                if self.world.is_valid(x, y) {
+                    d.draw_text(
+                        format!("{:5.2}", value).as_str(),
+                        x as i32 * size + 8,
+                        y as i32 * size + 8,
+                        20,
+                        Color::WHITE,
+                    );
+                }
+            }
+        }
     }
 }
 
