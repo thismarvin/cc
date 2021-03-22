@@ -174,7 +174,7 @@ impl Game {
             return 0.0;
         }
 
-        // If the depth is zero or we are at an "end" state then we no longer need to look ahead.
+        // If the depth is zero.
         if depth == 0 {
             return 0.0;
         }
