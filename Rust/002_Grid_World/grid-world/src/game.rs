@@ -1,6 +1,8 @@
 use raylib::prelude::*;
 use rna::*;
+use std::collections::HashMap;
 
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct State {
     x: usize,
     y: usize,
@@ -29,6 +31,7 @@ struct World {
     height: usize,
     board: Vec<usize>,
     values: Vec<f32>,
+    cache: HashMap<(State, usize), f32>,
 }
 
 impl World {
@@ -38,6 +41,7 @@ impl World {
             height,
             board: vec![0; width * height],
             values: vec![0.0; width * height],
+            cache: HashMap::new(),
         }
     }
 
@@ -84,13 +88,19 @@ pub struct Game {
 
 impl Core for Game {
     fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {
-        for y in 0..self.world.height {
-            for x in 0..self.world.width {
-                let value = self.value(State::new(x, y), self.k);
-                self.world.values[y * self.world.width + x] = value;
-                print!("{:5.2}, ", value);
+        // Taking a bottom up approach to this problem allows us to search through large
+        // depths with ease. Simply searching smaller depths before larger depths is enough to
+        // satisfy a bottom up approach.
+        for i in 1..self.k + 1 {
+            for y in 0..self.world.height {
+                for x in 0..self.world.width {
+                    let value = self.value(State::new(x, y), i);
+                    // Once we are at our target depth then we can save the value to the world.
+                    if i == self.k {
+                        self.world.values[y * self.world.width + x] = value;
+                    }
+                }
             }
-            println!();
         }
     }
     fn update(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {}
@@ -229,7 +239,7 @@ impl Game {
     }
 
     // Value Iteration
-    fn value(&self, state: State, depth: usize) -> f32 {
+    fn value(&mut self, state: State, depth: usize) -> f32 {
         // If we happen to be in an invalid position then stop!
         if !self.world.is_valid(state.x, state.y) {
             return 0.0;
@@ -243,6 +253,11 @@ impl Game {
         // If we can exit then we must exit.
         if self.can_exit(&state) {
             return self.reward(Action::Exit(&state));
+        }
+
+        // Check if we have already solved the given state and depth.
+        if let Some(value) = self.world.cache.get(&(state, depth)) {
+            return *value;
         }
 
         // We need to determine the optimal policy.
@@ -302,13 +317,17 @@ impl Game {
                     + self.gamma * self.value(misstep_b, depth - 1));
 
         // Find the highest value.
-        let mut max = &values[0];
+        let mut max = values[0];
         for i in 1..values.len() {
-            if &values[i] > max {
-                max = &values[i]
+            if values[i] > max {
+                max = values[i]
             }
         }
 
-        *max
+        // This particular problem has multiple overlapping subproblems; memoization will
+        // significantly improve performance!
+        self.world.cache.insert((state, depth), max);
+
+        max
     }
 }
