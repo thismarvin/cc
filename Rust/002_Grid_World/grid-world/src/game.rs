@@ -168,7 +168,21 @@ impl Core for Game {
 }
 
 impl Game {
-    pub fn new() -> Self {
+    pub fn new(mut args: std::env::Args) -> Self {
+        args.next();
+
+        let k = args
+            .next()
+            .unwrap_or(String::from("100"))
+            .parse::<usize>()
+            .unwrap_or(100);
+
+        let gamma = args
+            .next()
+            .unwrap_or(String::from("0.9"))
+            .parse::<f32>()
+            .unwrap_or(0.9);
+
         let mut world = World::new(4, 3);
         world.set(1, 1, 1);
 
@@ -180,8 +194,8 @@ impl Game {
                 offset: Vector2::new(0.0, 0.0),
             },
             world,
-            gamma: 0.9,
-            k: 5,
+            gamma,
+            k,
         }
     }
 

@@ -8,7 +8,7 @@ fn main() {
     config.title = "Grid World";
     config.window_size = (640, 360);
     config.vsync_enabled = true;
-    config.core = Some(Box::new(Game::new()));
+    config.core = Some(Box::new(Game::new(std::env::args())));
 
     App::build(config).run();
 }
