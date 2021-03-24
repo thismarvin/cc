@@ -29,6 +29,9 @@ struct World {
     height: usize,
     board: Vec<usize>,
     values: Vec<f32>,
+    q_values: Vec<[f32; 4]>,
+    min_value: f32,
+    max_value: f32,
 }
 
 impl World {
@@ -38,6 +41,9 @@ impl World {
             height,
             board: vec![0; width * height],
             values: vec![0.0; width * height],
+            q_values: vec![[0.0; 4]; width * height],
+            min_value: std::f32::MAX,
+            max_value: std::f32::MIN,
         }
     }
 
@@ -91,65 +97,54 @@ impl Core for Game {
             values = self.value_iteration(values);
         }
         self.world.values = values;
+
+        for value in self.world.values.iter() {
+            if *value > self.world.max_value {
+                self.world.max_value = *value;
+            }
+        }
+
+        for value in self.world.values.iter() {
+            if *value < self.world.min_value {
+                self.world.min_value = *value;
+            }
+        }
     }
     fn update(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {}
     fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
         let mut d = d.begin_mode2D(self.camera);
-        d.clear_background(Color::new(41, 173, 255, 255));
+        d.clear_background(Color::new(0, 0, 0, 255));
 
-        let mut max = std::f32::MIN;
-        for value in self.world.values.iter() {
-            if *value > max {
-                max = *value;
-            }
-        }
-
-        let mut min = std::f32::MAX;
-        for value in self.world.values.iter() {
-            if *value < min {
-                min = *value;
-            }
-        }
-
-        let size = 100;
-        let margin = size as f64 * 0.05;
+        let size: usize = 150;
 
         for y in 0..self.world.height {
             for x in 0..self.world.width {
-                let value = self.world.values[y * self.world.width + x];
-                let color;
-                if value < 0.0 {
-                    color = Color::new(
-                        rna::remap_range(value as f64, min as f64, 0.0, 255.0, 0.0) as u8,
-                        0,
-                        0,
-                        255,
-                    );
-                } else {
-                    color = Color::new(
-                        0,
-                        rna::remap_range(value as f64, 0.0, max as f64, 0.0, 255.0) as u8,
-                        0,
-                        255,
-                    );
-                }
-
-                d.draw_rectangle(
-                    x as i32 * size,
-                    y as i32 * size,
-                    (size as f64 - margin) as i32,
-                    (size as f64 - margin) as i32,
-                    color,
-                );
-
                 if self.world.is_valid(x, y) {
-                    d.draw_text(
-                        format!("{:5.2}", value).as_str(),
-                        x as i32 * size + 8,
-                        y as i32 * size + 8,
-                        20,
-                        Color::WHITE,
+                    self.draw_cell(
+                        &mut d,
+                        y * self.world.width + x,
+                        x as f32 * size as f32,
+                        y as f32 * size as f32,
+                        size,
                     );
+
+                    if self.can_exit(&State::new(x, y)) {
+                        let value = self.world.values[y * self.world.width + x];
+                        d.draw_rectangle(
+                            x as i32 * size as i32,
+                            y as i32 * size as i32,
+                            size as i32,
+                            size as i32,
+                            self.calculate_color(value),
+                        );
+                        d.draw_text(
+                            format!("{:5.2}", value).as_str(),
+                            x as i32 * size as i32 + (size as f32 * 0.18) as i32,
+                            y as i32 * size as i32 + (size as f32 * 0.38) as i32,
+                            40,
+                            Color::WHITE,
+                        );
+                    }
                 }
             }
         }
@@ -330,10 +325,99 @@ impl Game {
                     }
                 }
 
+                self.world.q_values[index] = new_values;
+
                 result[index] = max;
             }
         }
 
         result
+    }
+
+    fn calculate_color(&self, value: f32) -> Color {
+        let color;
+        if value < 0.0 {
+            color = Color::new(
+                rna::remap_range(value as f64, self.world.min_value as f64, 0.0, 255.0, 0.0) as u8,
+                0,
+                0,
+                255,
+            );
+        } else {
+            color = Color::new(
+                0,
+                rna::remap_range(value as f64, 0.0, self.world.max_value as f64, 0.0, 255.0) as u8,
+                0,
+                255,
+            );
+        }
+
+        color
+    }
+
+    fn draw_cell(
+        &self,
+        d: &mut RaylibMode2D<RaylibDrawHandle>,
+        index: usize,
+        x: f32,
+        y: f32,
+        size: usize,
+    ) {
+        let font_size = 20;
+        let q_values = self.world.q_values[index];
+
+        d.draw_triangle(
+            Vector2::new(x as f32, y as f32),
+            Vector2::new(x as f32 + size as f32 * 0.5, y as f32 + size as f32 * 0.5),
+            Vector2::new(x as f32 + size as f32, y as f32),
+            self.calculate_color(q_values[0]),
+        );
+        d.draw_triangle(
+            Vector2::new(x as f32 + size as f32, y as f32),
+            Vector2::new(x as f32 + size as f32 * 0.5, y as f32 + size as f32 * 0.5),
+            Vector2::new(x as f32 + size as f32, y as f32 + size as f32),
+            self.calculate_color(q_values[1]),
+        );
+        d.draw_triangle(
+            Vector2::new(x as f32 + size as f32, y as f32 + size as f32),
+            Vector2::new(x as f32 + size as f32 * 0.5, y as f32 + size as f32 * 0.5),
+            Vector2::new(x as f32, y as f32 + size as f32),
+            self.calculate_color(q_values[2]),
+        );
+        d.draw_triangle(
+            Vector2::new(x as f32, y as f32 + size as f32),
+            Vector2::new(x as f32 + size as f32 * 0.5, y as f32 + size as f32 * 0.5),
+            Vector2::new(x as f32, y as f32),
+            self.calculate_color(q_values[3]),
+        );
+
+        d.draw_text(
+            format!("{:5.2}", q_values[0]).as_str(),
+            x as i32 + (size as f32 * 0.3) as i32,
+            y as i32 + (size as f32 * 0.05) as i32,
+            font_size,
+            Color::WHITE,
+        );
+        d.draw_text(
+            format!("{:5.2}", q_values[1]).as_str(),
+            x as i32 + (size as f32 * 0.58) as i32,
+            y as i32 + (size as f32 * 0.45) as i32,
+            20,
+            Color::WHITE,
+        );
+        d.draw_text(
+            format!("{:5.2}", q_values[2]).as_str(),
+            x as i32 + (size as f32 * 0.3) as i32,
+            y as i32 + (size as f32 * 0.78) as i32,
+            20,
+            Color::WHITE,
+        );
+        d.draw_text(
+            format!("{:5.2}", q_values[3]).as_str(),
+            x as i32 + (size as f32 * 0.01) as i32,
+            y as i32 + (size as f32 * 0.45) as i32,
+            font_size,
+            Color::WHITE,
+        );
     }
 }
