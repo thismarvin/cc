@@ -1,6 +1,5 @@
 use raylib::prelude::*;
 use rna::*;
-use std::collections::HashMap;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct State {
@@ -31,7 +30,6 @@ struct World {
     height: usize,
     board: Vec<usize>,
     values: Vec<f32>,
-    cache: HashMap<(State, usize), f32>,
 }
 
 impl World {
@@ -41,7 +39,6 @@ impl World {
             height,
             board: vec![0; width * height],
             values: vec![0.0; width * height],
-            cache: HashMap::new(),
         }
     }
 
@@ -88,20 +85,13 @@ pub struct Game {
 
 impl Core for Game {
     fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {
-        // Taking a bottom up approach to this problem allows us to search through large
-        // depths with ease. Simply searching smaller depths before larger depths is enough to
-        // satisfy a bottom up approach.
-        for i in 1..self.k + 1 {
-            for y in 0..self.world.height {
-                for x in 0..self.world.width {
-                    let value = self.value(State::new(x, y), i);
-                    // Once we are at our target depth then we can save the value to the world.
-                    if i == self.k {
-                        self.world.values[y * self.world.width + x] = value;
-                    }
-                }
-            }
+        // Initialize all values with zero.
+        let mut values = vec![0.0; self.world.width * self.world.height];
+        // Use a bottom up approach to calculate the values of each state.
+        for _ in 0..self.k {
+            values = self.value_iteration(values);
         }
+        self.world.values = values;
     }
     fn update(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {}
     fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
@@ -252,96 +242,99 @@ impl Game {
         }
     }
 
-    // Value Iteration
-    fn value(&mut self, state: State, depth: usize) -> f32 {
-        // If we happen to be in an invalid position then stop!
-        if !self.world.is_valid(state.x, state.y) {
-            return 0.0;
-        }
+    // To be honest, I am not sure if I am doing value iteration or policy iteration.
+    fn value_iteration(&mut self, values: Vec<f32>) -> Vec<f32> {
+        let mut result = vec![0.0; values.len()];
 
-        // If the depth is zero.
-        if depth == 0 {
-            return 0.0;
-        }
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let state = State::new(x, y);
+                let index = y * self.world.width + x;
 
-        // If we can exit then we must exit.
-        if self.can_exit(&state) {
-            return self.reward(Action::Exit(&state));
-        }
+                // If we happen to be in an invalid position then stop!
+                if !self.world.is_valid(state.x, state.y) {
+                    result[index] = 0.0;
+                    continue;
+                }
 
-        // Check if we have already solved the given state and depth.
-        if let Some(value) = self.world.cache.get(&(state, depth)) {
-            return *value;
-        }
+                // If we can exit then we must exit.
+                if self.can_exit(&state) {
+                    result[index] = self.reward(Action::Exit(&state));
+                    continue;
+                }
 
-        // We need to determine the optimal policy.
-        // In order to do so we must recursively find the expected value for each possible action in the
-        // current state. The action with the hightest value is our final target.
+                // We need to find the optimal policy.
+                // In order to do so we must recursively find the expected value for each possible action in the
+                // current state. The action with the hightest value is our final target.
 
-        // T(s,a,s') * [R(s,a,s') + gamma * V(s', depth - 1)]
+                // T(s,a,s') * [R(s,a,s') + gamma * V(s', depth - 1)]
 
-        let mut values: [f32; 4] = [0.0; 4];
+                let mut new_values: [f32; 4] = [0.0; 4];
 
-        let target = self.move_to(&state, Direction::Up);
-        let misstep_a = self.move_to(&state, Direction::Left);
-        let misstep_b = self.move_to(&state, Direction::Right);
-        values[0] = 0.8
-            * (self.reward(Action::Move(&target)) + self.gamma * self.value(target, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_a))
-                    + self.gamma * self.value(misstep_a, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_b))
-                    + self.gamma * self.value(misstep_b, depth - 1));
+                let target = self.move_to(&state, Direction::Up);
+                let misstep_a = self.move_to(&state, Direction::Left);
+                let misstep_b = self.move_to(&state, Direction::Right);
+                new_values[0] = 0.8
+                    * (self.reward(Action::Move(&target))
+                        + self.gamma * values[target.y * self.world.width + target.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_a))
+                            + self.gamma * values[misstep_a.y * self.world.width + misstep_a.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_b))
+                            + self.gamma * values[misstep_b.y * self.world.width + misstep_b.x]);
 
-        let target = self.move_to(&state, Direction::Right);
-        let misstep_a = self.move_to(&state, Direction::Up);
-        let misstep_b = self.move_to(&state, Direction::Down);
-        values[1] = 0.8
-            * (self.reward(Action::Move(&target)) + self.gamma * self.value(target, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_a))
-                    + self.gamma * self.value(misstep_a, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_b))
-                    + self.gamma * self.value(misstep_b, depth - 1));
+                let target = self.move_to(&state, Direction::Right);
+                let misstep_a = self.move_to(&state, Direction::Up);
+                let misstep_b = self.move_to(&state, Direction::Down);
+                new_values[1] = 0.8
+                    * (self.reward(Action::Move(&target))
+                        + self.gamma * values[target.y * self.world.width + target.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_a))
+                            + self.gamma * values[misstep_a.y * self.world.width + misstep_a.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_b))
+                            + self.gamma * values[misstep_b.y * self.world.width + misstep_b.x]);
 
-        let target = self.move_to(&state, Direction::Down);
-        let misstep_a = self.move_to(&state, Direction::Right);
-        let misstep_b = self.move_to(&state, Direction::Left);
-        values[2] = 0.8
-            * (self.reward(Action::Move(&target)) + self.gamma * self.value(target, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_a))
-                    + self.gamma * self.value(misstep_a, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_b))
-                    + self.gamma * self.value(misstep_b, depth - 1));
+                let target = self.move_to(&state, Direction::Down);
+                let misstep_a = self.move_to(&state, Direction::Right);
+                let misstep_b = self.move_to(&state, Direction::Left);
+                new_values[2] = 0.8
+                    * (self.reward(Action::Move(&target))
+                        + self.gamma * values[target.y * self.world.width + target.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_a))
+                            + self.gamma * values[misstep_a.y * self.world.width + misstep_a.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_b))
+                            + self.gamma * values[misstep_b.y * self.world.width + misstep_b.x]);
 
-        let target = self.move_to(&state, Direction::Left);
-        let misstep_a = self.move_to(&state, Direction::Down);
-        let misstep_b = self.move_to(&state, Direction::Up);
-        values[3] = 0.8
-            * (self.reward(Action::Move(&target)) + self.gamma * self.value(target, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_a))
-                    + self.gamma * self.value(misstep_a, depth - 1))
-            + 0.1
-                * (self.reward(Action::Move(&misstep_b))
-                    + self.gamma * self.value(misstep_b, depth - 1));
+                let target = self.move_to(&state, Direction::Left);
+                let misstep_a = self.move_to(&state, Direction::Down);
+                let misstep_b = self.move_to(&state, Direction::Up);
+                new_values[3] = 0.8
+                    * (self.reward(Action::Move(&target))
+                        + self.gamma * values[target.y * self.world.width + target.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_a))
+                            + self.gamma * values[misstep_a.y * self.world.width + misstep_a.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_b))
+                            + self.gamma * values[misstep_b.y * self.world.width + misstep_b.x]);
 
-        // Find the highest value.
-        let mut max = values[0];
-        for i in 1..values.len() {
-            if values[i] > max {
-                max = values[i]
+                // Find the highest value.
+                let mut max = new_values[0];
+                for i in 1..new_values.len() {
+                    if new_values[i] > max {
+                        max = new_values[i]
+                    }
+                }
+
+                result[index] = max;
             }
         }
 
-        // This particular problem has multiple overlapping subproblems; memoization will
-        // significantly improve performance!
-        self.world.cache.insert((state, depth), max);
-
-        max
+        result
     }
 }
