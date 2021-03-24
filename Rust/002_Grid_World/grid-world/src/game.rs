@@ -12,6 +12,7 @@ impl State {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Direction {
     Up,
     Down,
@@ -92,10 +93,53 @@ impl Core for Game {
     fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {
         // Initialize all values with zero.
         let mut values = vec![0.0; self.world.width * self.world.height];
+
         // Use a bottom up approach to calculate the values of each state.
         for _ in 0..self.k {
-            values = self.value_iteration(values);
+            values = self.value_iteration(&values);
         }
+
+        // let mut policy = vec![Direction::Up; self.world.width * self.world.height];
+
+        // let epsilon = 0.0001;
+        // let mut iterations = 0;
+        // let mut difference;
+
+        // loop {
+        //     let b = self.value_iteration(&values);
+        //     difference = b
+        //         .iter()
+        //         .enumerate()
+        //         .map(|(i, v)| *v - values[i])
+        //         .fold(0.0, |a, v| a + v)
+        //         / values.len() as f32;
+        //     values = b;
+        //     iterations += 1;
+
+        //     if difference.abs() < epsilon && iterations > 1 {
+        //         println!("{}", iterations);
+        //         break;
+        //     }
+        // }
+
+        // loop {
+        //     let (a, b) = self.policy_iteration(policy, &values);
+        //     difference = b
+        //         .iter()
+        //         .enumerate()
+        //         .map(|(i, v)| *v - values[i])
+        //         .fold(0.0, |a, v| a + v)
+        //         / values.len() as f32;
+        //     policy = a;
+        //     values = b;
+        //     iterations += 1;
+
+        //     if difference.abs() < epsilon && iterations > 1 {
+        //         println!("{}", iterations);
+        //         break;
+        //     }
+        // }
+
         self.world.values = values;
 
         for value in self.world.values.iter() {
@@ -213,6 +257,13 @@ impl Game {
         State::new(state.x, state.y)
     }
 
+    fn get_moves(&self, direction: Direction) -> [Direction; 3] {
+        match direction {
+            Direction::Up | Direction::Down => [direction, Direction::Left, Direction::Right],
+            Direction::Right | Direction::Left => [direction, Direction::Up, Direction::Down],
+        }
+    }
+
     fn can_exit(&self, state: &State) -> bool {
         match state {
             State { x: 3, y: 0 } => true,
@@ -236,8 +287,7 @@ impl Game {
         }
     }
 
-    // To be honest, I am not sure if I am doing value iteration or policy iteration.
-    fn value_iteration(&mut self, values: Vec<f32>) -> Vec<f32> {
+    fn value_iteration(&mut self, values: &Vec<f32>) -> Vec<f32> {
         let mut result = vec![0.0; values.len()];
 
         for y in 0..self.world.height {
@@ -332,6 +382,99 @@ impl Game {
         }
 
         result
+    }
+
+    fn policy_evaluation(&mut self, policy: &Vec<Direction>, values: &Vec<f32>) -> Vec<f32> {
+        let mut result = vec![0.0; values.len()];
+
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let state = State::new(x, y);
+                let index = y * self.world.width + x;
+
+                // If we happen to be in an invalid position then stop!
+                if !self.world.is_valid(state.x, state.y) {
+                    continue;
+                }
+
+                // If we can exit then we must exit.
+                if self.can_exit(&state) {
+                    result[index] = self.reward(Action::Exit(&state));
+                    continue;
+                }
+
+                let moves = self.get_moves(policy[index]);
+                let target = self.move_to(&state, moves[0]);
+                let misstep_a = self.move_to(&state, moves[1]);
+                let misstep_b = self.move_to(&state, moves[2]);
+                let value = 0.8
+                    * (self.reward(Action::Move(&target))
+                        + self.gamma * values[target.y * self.world.width + target.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_a))
+                            + self.gamma * values[misstep_a.y * self.world.width + misstep_a.x])
+                    + 0.1
+                        * (self.reward(Action::Move(&misstep_b))
+                            + self.gamma * values[misstep_b.y * self.world.width + misstep_b.x]);
+
+                result[index] = value;
+
+                match policy[index] {
+                    Direction::Up => self.world.q_values[index][0] = value,
+                    Direction::Right => self.world.q_values[index][1] = value,
+                    Direction::Down => self.world.q_values[index][2] = value,
+                    Direction::Left => self.world.q_values[index][3] = value,
+                }
+            }
+        }
+
+        result
+    }
+
+    fn policy_improvement(&self, policy: &Vec<Direction>, values: &Vec<f32>) -> Vec<Direction> {
+        let mut new_policy = policy.clone();
+
+        let directions = [
+            Direction::Up,
+            Direction::Right,
+            Direction::Down,
+            Direction::Left,
+        ];
+
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let state = State::new(x, y);
+                let index = y * self.world.width + x;
+
+                let mut action = policy[index];
+                let temp = self.move_to(&state, action);
+                let mut max = values[temp.y * self.world.width + temp.x];
+
+                for direction in directions.iter() {
+                    let temp = self.move_to(&state, *direction);
+                    let value = values[temp.y * self.world.width + temp.x];
+                    if value > max {
+                        max = value;
+                        action = *direction;
+                    }
+                }
+
+                new_policy[index] = action;
+            }
+        }
+
+        new_policy
+    }
+
+    fn policy_iteration(
+        &mut self,
+        policy: Vec<Direction>,
+        values: &Vec<f32>,
+    ) -> (Vec<Direction>, Vec<f32>) {
+        let new_values = self.policy_evaluation(&policy, &values);
+        let new_policy = self.policy_improvement(&policy, &values);
+
+        (new_policy, new_values)
     }
 
     fn calculate_color(&self, value: f32) -> Color {
