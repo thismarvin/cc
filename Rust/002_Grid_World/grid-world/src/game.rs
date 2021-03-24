@@ -1,7 +1,6 @@
 use raylib::prelude::*;
 use rna::*;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct State {
     x: usize,
     y: usize,
