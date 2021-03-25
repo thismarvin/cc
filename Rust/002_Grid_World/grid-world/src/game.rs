@@ -12,7 +12,7 @@ impl State {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Direction {
     Up,
     Down,
@@ -105,6 +105,7 @@ impl Core for Game {
         // let mut iterations = 0;
         // let mut difference;
 
+        // // Value iteration until convergence.
         // loop {
         //     let b = self.value_iteration(&values);
         //     difference = b
@@ -122,6 +123,7 @@ impl Core for Game {
         //     }
         // }
 
+        // // Policy Iteration until convergence.
         // loop {
         //     let (a, b) = self.policy_iteration(policy, &values);
         //     difference = b
@@ -137,6 +139,27 @@ impl Core for Game {
         //     if difference.abs() < epsilon && iterations > 1 {
         //         println!("{}", iterations);
         //         break;
+        //     }
+        // }
+
+        // // Policy Iteration until policy convergence.
+        // 'outer: loop {
+        //     let (a, b) = self.policy_iteration(&policy, &values);
+        //     values = b;
+        //     iterations += 1;
+
+        //     if iterations > 1 {
+        //         for i in 0..policy.len() {
+        //             if !(a[i] == policy[i]) {
+        //                 policy = a;
+        //                 break;
+        //             }
+        //             if i == policy.len() - 1 {
+        //                 policy = a;
+        //                 println!("{}", iterations);
+        //                 break 'outer;
+        //             }
+        //         }
         //     }
         // }
 
@@ -468,7 +491,7 @@ impl Game {
 
     fn policy_iteration(
         &mut self,
-        policy: Vec<Direction>,
+        policy: &Vec<Direction>,
         values: &Vec<f32>,
     ) -> (Vec<Direction>, Vec<f32>) {
         let new_values = self.policy_evaluation(&policy, &values);
