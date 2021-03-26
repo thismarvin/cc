@@ -143,25 +143,8 @@ impl Core for Game {
         // }
 
         // // Policy Iteration until policy convergence.
-        // 'outer: loop {
-        //     let (a, b) = self.policy_iteration(&policy, &values);
-        //     values = b;
-        //     iterations += 1;
-
-        //     if iterations > 1 {
-        //         for i in 0..policy.len() {
-        //             if !(a[i] == policy[i]) {
-        //                 policy = a;
-        //                 break;
-        //             }
-        //             if i == policy.len() - 1 {
-        //                 policy = a;
-        //                 println!("{}", iterations);
-        //                 break 'outer;
-        //             }
-        //         }
-        //     }
-        // }
+        // let (a, b) = self.policy_iteration(&policy, &values);
+        // values = b;
 
         self.world.values = values;
 
@@ -494,8 +477,49 @@ impl Game {
         policy: &Vec<Direction>,
         values: &Vec<f32>,
     ) -> (Vec<Direction>, Vec<f32>) {
-        let new_values = self.policy_evaluation(&policy, &values);
-        let new_policy = self.policy_improvement(&policy, &values);
+        let mut new_policy = policy.clone();
+        let mut new_values = values.clone();
+        let epsilon = 0.0001;
+
+        'outer: loop {
+            let mut iterations = 0;
+            loop {
+                iterations += 1;
+
+                let temp = self.policy_evaluation(&new_policy, &new_values);
+                let difference = temp
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| *v - new_values[i])
+                    .fold(0.0, |a, v| a + v)
+                    / temp.len() as f32;
+
+                new_values = temp;
+
+                if difference.abs() < epsilon && iterations > 1 {
+                    break;
+                }
+            }
+
+            iterations = 0;
+            'inner: loop {
+                iterations += 1;
+
+                let temp = self.policy_improvement(&new_policy, &new_values);
+                if iterations > 1 {
+                    for i in 0..new_policy.len() {
+                        if !(temp[i] == new_policy[i]) {
+                            new_policy = temp;
+                            break 'inner;
+                        }
+                        if i == new_policy.len() - 1 {
+                            new_policy = temp;
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
 
         (new_policy, new_values)
     }
