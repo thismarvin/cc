@@ -25,6 +25,16 @@ enum Action<'a> {
     Exit(&'a State),
 }
 
+#[derive(Clone, Copy)]
+enum Policy {
+    None,
+    Move(Direction),
+    Exit,
+}
+
+// TODO:
+// - the world itself should keep track of exits... not Game...
+// - ability to load a world from a file?
 struct World {
     width: usize,
     height: usize,
@@ -46,6 +56,10 @@ impl World {
             min_value: std::f32::MAX,
             max_value: std::f32::MIN,
         }
+    }
+
+    fn len(&self) -> usize {
+        self.width * self.height
     }
 
     fn get(&self, x: usize, y: usize) -> Option<&usize> {
@@ -91,44 +105,13 @@ pub struct Game {
 
 impl Core for Game {
     fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {
-        // Initialize all values with zero.
-        let mut values = vec![0.0; self.world.width * self.world.height];
-
-        // Use a bottom up approach to calculate the values of each state.
-        for _ in 0..self.k {
-            values = self.value_iteration(&values);
-        }
-
-        // let mut policy = vec![Direction::Up; self.world.width * self.world.height];
-
-        // let epsilon = 0.0001;
-        // let mut iterations = 0;
-
-        // // Value iteration until convergence.
-        // loop {
-        //     iterations += 1;
-
-        //     let b = self.value_iteration(&values);
-        //     let deltas = b.iter().enumerate().map(|(i, v)| *v - values[i]);
-
-        //     let mut max_delta = f32::MIN;
-        //     for delta in deltas {
-        //         if delta > max_delta {
-        //             max_delta = delta;
-        //         }
-        //     }
-
-        //     values = b;
-
-        //     if max_delta.abs() < epsilon && iterations > 1 {
-        //         println!("{}", iterations);
-        //         break;
-        //     }
+        // // Use a bottom up approach to calculate the values of each state.
+        // for _ in 0..self.k {
+        //     values = self.value_iteration(&values);
         // }
 
-        // // Policy Iteration until policy convergence.
-        // let (a, b) = self.policy_iteration(&policy, &values);
-        // values = b;
+        let epsilon = 0.0001;
+        let (values, _) = self.real_value_iteration(epsilon);
 
         self.world.values = values;
 
@@ -275,6 +258,70 @@ impl Game {
                 };
             }
         }
+    }
+
+    fn real_value_iteration(&mut self, epsilon: f32) -> (Vec<f32>, Vec<Policy>) {
+        let mut values = vec![0.0; self.world.len()];
+
+        'outer: loop {
+            let mut iterations = 0;
+            loop {
+                iterations += 1;
+
+                let temp = self.value_iteration(&values);
+                let deltas = temp.iter().enumerate().map(|(i, v)| *v - values[i]);
+
+                let mut max_delta = f32::MIN;
+                for delta in deltas {
+                    if delta > max_delta {
+                        max_delta = delta;
+                    }
+                }
+
+                values = temp;
+
+                if max_delta.abs() < epsilon && iterations > 1 {
+                    break 'outer;
+                }
+            }
+        }
+
+        let mut policy = vec![Policy::None; self.world.len()];
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let index = y * self.world.width + x;
+                let state = State::new(x, y);
+
+                if !self.world.is_valid(x, y) {
+                    policy[index] = Policy::None;
+                    continue;
+                }
+
+                if self.can_exit(&&state) {
+                    policy[index] = Policy::Exit;
+                    continue;
+                }
+
+                let mut target = 0;
+                for i in 1..self.world.q_values[index].len() {
+                    if self.world.q_values[index][i] > self.world.q_values[index][target] {
+                        target = i;
+                    }
+                }
+
+                let direction = match target {
+                    0 => Direction::Up,
+                    1 => Direction::Right,
+                    2 => Direction::Down,
+                    3 => Direction::Left,
+                    _ => panic!("???"),
+                };
+
+                policy[index] = Policy::Move(direction);
+            }
+        }
+
+        (values, policy)
     }
 
     fn value_iteration(&mut self, values: &Vec<f32>) -> Vec<f32> {
@@ -456,50 +503,45 @@ impl Game {
         new_policy
     }
 
-    fn policy_iteration(
-        &mut self,
-        policy: &Vec<Direction>,
-        values: &Vec<f32>,
-    ) -> (Vec<Direction>, Vec<f32>) {
-        let mut new_policy = policy.clone();
-        let mut new_values = values.clone();
-        let epsilon = 0.0001;
+    fn policy_iteration(&mut self, epsilon: f32) -> (Vec<f32>, Vec<Direction>) {
+        let mut values = vec![0.0; self.world.len()];
+        let mut policy = vec![Direction::Up; self.world.len()];
 
         'outer: loop {
             let mut iterations = 0;
-            loop {
+            'evaluation: loop {
                 iterations += 1;
 
-                let temp = self.policy_evaluation(&new_policy, &new_values);
-                let deltas = temp.iter().enumerate().map(|(i, v)| *v - new_values[i]);
+                let temp = self.policy_evaluation(&policy, &values);
+                let deltas = temp.iter().enumerate().map(|(i, v)| *v - values[i]);
 
-                let mut max_delta = 0.0;
+                let mut max_delta = f32::MIN;
                 for delta in deltas {
                     if delta > max_delta {
                         max_delta = delta;
                     }
                 }
 
-                new_values = temp;
+                values = temp;
 
                 if max_delta.abs() < epsilon && iterations > 1 {
-                    break;
+                    break 'evaluation;
                 }
             }
 
             iterations = 0;
-            'inner: loop {
+            'improvement: loop {
                 iterations += 1;
 
-                let temp = self.policy_improvement(&new_policy, &new_values);
+                let temp = self.policy_improvement(&policy, &values);
                 if iterations > 1 {
-                    for i in 0..new_policy.len() {
-                        if !(temp[i] == new_policy[i]) {
-                            new_policy = temp;
-                            break 'inner;
+                    for i in 0..policy.len() {
+                        if !(temp[i] == policy[i]) {
+                            policy = temp;
+                            break 'improvement;
                         }
-                        if i == new_policy.len() - 1 {
-                            new_policy = temp;
+                        if i == policy.len() - 1 {
+                            policy = temp;
                             break 'outer;
                         }
                     }
@@ -507,7 +549,7 @@ impl Game {
             }
         }
 
-        (new_policy, new_values)
+        (values, policy)
     }
 
     fn calculate_color(&self, value: f32) -> Color {
