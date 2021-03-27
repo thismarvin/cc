@@ -103,40 +103,24 @@ impl Core for Game {
 
         // let epsilon = 0.0001;
         // let mut iterations = 0;
-        // let mut difference;
 
         // // Value iteration until convergence.
         // loop {
+        //     iterations += 1;
+
         //     let b = self.value_iteration(&values);
-        //     difference = b
-        //         .iter()
-        //         .enumerate()
-        //         .map(|(i, v)| *v - values[i])
-        //         .fold(0.0, |a, v| a + v)
-        //         / values.len() as f32;
-        //     values = b;
-        //     iterations += 1;
+        //     let deltas = b.iter().enumerate().map(|(i, v)| *v - values[i]);
 
-        //     if difference.abs() < epsilon && iterations > 1 {
-        //         println!("{}", iterations);
-        //         break;
+        //     let mut max_delta = f32::MIN;
+        //     for delta in deltas {
+        //         if delta > max_delta {
+        //             max_delta = delta;
+        //         }
         //     }
-        // }
 
-        // // Policy Iteration until convergence.
-        // loop {
-        //     let (a, b) = self.policy_iteration(policy, &values);
-        //     difference = b
-        //         .iter()
-        //         .enumerate()
-        //         .map(|(i, v)| *v - values[i])
-        //         .fold(0.0, |a, v| a + v)
-        //         / values.len() as f32;
-        //     policy = a;
         //     values = b;
-        //     iterations += 1;
 
-        //     if difference.abs() < epsilon && iterations > 1 {
+        //     if max_delta.abs() < epsilon && iterations > 1 {
         //         println!("{}", iterations);
         //         break;
         //     }
@@ -487,16 +471,18 @@ impl Game {
                 iterations += 1;
 
                 let temp = self.policy_evaluation(&new_policy, &new_values);
-                let difference = temp
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| *v - new_values[i])
-                    .fold(0.0, |a, v| a + v)
-                    / temp.len() as f32;
+                let deltas = temp.iter().enumerate().map(|(i, v)| *v - new_values[i]);
+
+                let mut max_delta = 0.0;
+                for delta in deltas {
+                    if delta > max_delta {
+                        max_delta = delta;
+                    }
+                }
 
                 new_values = temp;
 
-                if difference.abs() < epsilon && iterations > 1 {
+                if max_delta.abs() < epsilon && iterations > 1 {
                     break;
                 }
             }
