@@ -618,7 +618,7 @@ impl Game {
         );
         d.draw_text(
             format!("{:5.2}", q_values[1]).as_str(),
-            x as i32 + (size as f32 * 0.58) as i32,
+            x as i32 + (size as f32 * 0.63) as i32,
             y as i32 + (size as f32 * 0.45) as i32,
             20,
             Color::WHITE,
@@ -626,7 +626,7 @@ impl Game {
         d.draw_text(
             format!("{:5.2}", q_values[2]).as_str(),
             x as i32 + (size as f32 * 0.3) as i32,
-            y as i32 + (size as f32 * 0.78) as i32,
+            y as i32 + (size as f32 * 0.83) as i32,
             20,
             Color::WHITE,
         );
