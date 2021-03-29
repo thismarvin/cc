@@ -20,25 +20,29 @@ enum Direction {
     Right,
 }
 
-enum Action<'a> {
-    Move(&'a State),
-    Exit(&'a State),
-}
+const DIRECTIONS: [Direction; 4] = [
+    Direction::Up,
+    Direction::Right,
+    Direction::Down,
+    Direction::Left,
+];
 
 #[derive(Clone, Copy, PartialEq)]
-enum Policy {
+enum Action {
     None,
     Move(Direction),
     Exit,
 }
 
 // TODO:
-// - the world itself should keep track of exits... not Game...
 // - ability to load a world from a file?
 struct World {
     width: usize,
     height: usize,
     board: Vec<usize>,
+    exits: Vec<Option<f32>>,
+    noise: f32,
+
     values: Vec<f32>,
     q_values: Vec<[f32; 4]>,
     min_value: f32,
@@ -46,11 +50,13 @@ struct World {
 }
 
 impl World {
-    fn new(width: usize, height: usize) -> Self {
+    pub fn new(width: usize, height: usize, noise: f32) -> Self {
         World {
             width,
             height,
             board: vec![0; width * height],
+            exits: vec![None; width * height],
+            noise,
             values: vec![0.0; width * height],
             q_values: vec![[0.0; 4]; width * height],
             min_value: std::f32::MAX,
@@ -58,40 +64,112 @@ impl World {
         }
     }
 
-    fn len(&self) -> usize {
+    pub fn area(&self) -> usize {
         self.width * self.height
     }
 
-    fn get(&self, x: usize, y: usize) -> Option<&usize> {
-        self.board.get(y * self.width + x)
-    }
-
-    fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
-        self.board.get_mut(y * self.width + x)
-    }
-
-    fn set(&mut self, x: usize, y: usize, value: usize) {
-        if let Some(target) = self.get_mut(x, y) {
-            *target = value;
+    pub fn add_wall(&mut self, x: usize, y: usize) {
+        if let Some(target) = self.board.get_mut(y * self.width + x) {
+            *target = 1;
         }
     }
 
-    fn is_valid(&self, x: usize, y: usize) -> bool {
-        if let Some(target) = self.get(x, y) {
+    pub fn add_exit(&mut self, x: usize, y: usize, reward: f32) {
+        if let Some(target) = self.exits.get_mut(y * self.width + x) {
+            *target = Some(reward);
+        }
+    }
+
+    pub fn valid_position(&self, state: &State) -> bool {
+        if let Some(target) = self.board.get(state.y * self.width + state.x) {
             return *target == 0;
         }
         false
     }
 
-    fn debug(&self) {
-        let mut temp = 0;
-        for i in 0..self.board.len() {
-            print!("{}", self.board[i]);
-            temp += 1;
-            if temp >= self.width {
-                temp = 0;
-                println!();
+    pub fn can_exit(&self, state: &State) -> bool {
+        if let Some(target) = self.exits.get(state.y * self.width + state.x) {
+            if target.is_some() {
+                return true;
             }
+        }
+
+        false
+    }
+
+    pub fn transition(&self, state: &State, action: Action) -> Option<Vec<(f32, Action)>> {
+        match action {
+            Action::Exit => {
+                if let Some(target) = self.exits.get(state.y * self.width + state.x) {
+                    if target.is_some() {
+                        return Some(vec![(1.0, Action::Exit)]);
+                    }
+                }
+                None
+            }
+            Action::Move(direction) => {
+                let moves = self.get_moves(direction);
+                let mut result = Vec::with_capacity(moves.len());
+                result.push((self.noise, Action::Move(moves[0])));
+                let remainder = (1.0 - self.noise) / (moves.len() as f32 - 1.0);
+                for i in 1..moves.len() {
+                    result.push((remainder, Action::Move(moves[i])));
+                }
+                return Some(result);
+            }
+            Action::None => None,
+        }
+    }
+
+    pub fn reward(&self, state: &State, action: Action) -> f32 {
+        match action {
+            Action::Exit => {
+                if let Some(target) = self.exits.get(state.y * self.width + state.x) {
+                    if let Some(reward) = target {
+                        return *reward;
+                    }
+                }
+                0.0
+            }
+            Action::Move(_) => 0.0,
+            Action::None => 0.0,
+        }
+    }
+
+    pub fn move_to(&self, state: &State, direction: Direction) -> State {
+        match direction {
+            Direction::Up if state.y > 0 => {
+                if self.valid_position(&State::new(state.x, state.y - 1)) {
+                    return State::new(state.x, state.y - 1);
+                }
+            }
+            Direction::Down if state.y < self.height - 1 => {
+                if self.valid_position(&State::new(state.x, state.y + 1)) {
+                    return State::new(state.x, state.y + 1);
+                }
+            }
+            Direction::Left if state.x > 0 => {
+                if self.valid_position(&State::new(state.x - 1, state.y)) {
+                    return State::new(state.x - 1, state.y);
+                }
+            }
+            Direction::Right if state.x < self.width - 1 => {
+                if self.valid_position(&State::new(state.x + 1, state.y)) {
+                    return State::new(state.x + 1, state.y);
+                }
+            }
+            _ => {
+                return State::new(state.x, state.y);
+            }
+        }
+
+        State::new(state.x, state.y)
+    }
+
+    fn get_moves(&self, direction: Direction) -> [Direction; 3] {
+        match direction {
+            Direction::Up | Direction::Down => [direction, Direction::Left, Direction::Right],
+            Direction::Right | Direction::Left => [direction, Direction::Up, Direction::Down],
         }
     }
 }
@@ -100,18 +178,12 @@ pub struct Game {
     camera: Camera2D,
     world: World,
     gamma: f32,
-    k: usize,
 }
 
 impl Core for Game {
     fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {
-        // // Use a bottom up approach to calculate the values of each state.
-        // for _ in 0..self.k {
-        //     values = self.value_iteration(&values);
-        // }
-
         let epsilon = 0.0001;
-        let (values, _) = self.value_iteration(epsilon);
+        let (_, values) = self.value_iteration(epsilon);
 
         self.world.values = values;
 
@@ -136,17 +208,10 @@ impl Core for Game {
 
         for y in 0..self.world.height {
             for x in 0..self.world.width {
-                if self.world.is_valid(x, y) {
-                    self.draw_cell(
-                        &mut d,
-                        y * self.world.width + x,
-                        x as f32 * size as f32,
-                        y as f32 * size as f32,
-                        size,
-                    );
-
-                    if self.can_exit(&State::new(x, y)) {
-                        let value = self.world.values[y * self.world.width + x];
+                let state = State::new(x, y);
+                if self.world.valid_position(&state) {
+                    if self.world.can_exit(&state) {
+                        let value = self.world.reward(&state, Action::Exit);
                         d.draw_rectangle(
                             x as i32 * size as i32,
                             y as i32 * size as i32,
@@ -161,6 +226,14 @@ impl Core for Game {
                             40,
                             Color::WHITE,
                         );
+                    } else {
+                        self.draw_cell(
+                            &mut d,
+                            y * self.world.width + x,
+                            x as f32 * size as f32,
+                            y as f32 * size as f32,
+                            size,
+                        );
                     }
                 }
             }
@@ -172,20 +245,16 @@ impl Game {
     pub fn new(mut args: std::env::Args) -> Self {
         args.next();
 
-        let k = args
-            .next()
-            .unwrap_or(String::from("100"))
-            .parse::<usize>()
-            .unwrap_or(100);
-
         let gamma = args
             .next()
             .unwrap_or(String::from("0.9"))
             .parse::<f32>()
             .unwrap_or(0.9);
 
-        let mut world = World::new(4, 3);
-        world.set(1, 1, 1);
+        let mut world = World::new(4, 3, 0.8);
+        world.add_wall(1, 1);
+        world.add_exit(3, 0, 1.0);
+        world.add_exit(3, 1, -1.0);
 
         Game {
             camera: Camera2D {
@@ -196,72 +265,69 @@ impl Game {
             },
             world,
             gamma,
-            k,
         }
     }
 
-    fn move_to(&self, state: &State, direction: Direction) -> State {
-        match direction {
-            Direction::Up if state.y > 0 => {
-                if self.world.is_valid(state.x, state.y - 1) {
-                    return State::new(state.x, state.y - 1);
+    fn value_bellman(&mut self, values: &Vec<f32>) -> Vec<f32> {
+        let mut result = vec![0.0; values.len()];
+
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let index = y * self.world.width + x;
+                let state = State::new(x, y);
+
+                // If we happen to be in an invalid position then move along!
+                if !self.world.valid_position(&state) {
+                    result[index] = 0.0;
+                    continue;
                 }
-            }
-            Direction::Down if state.y < self.world.height - 1 => {
-                if self.world.is_valid(state.x, state.y + 1) {
-                    return State::new(state.x, state.y + 1);
+
+                // If we can exit then we must exit.
+                if self.world.can_exit(&state) {
+                    result[index] = self.world.reward(&state, Action::Exit);
+                    continue;
                 }
-            }
-            Direction::Left if state.x > 0 => {
-                if self.world.is_valid(state.x - 1, state.y) {
-                    return State::new(state.x - 1, state.y);
+
+                // In order to find the optimal policy we must recursively calculate the expected value for each possible action in the
+                // current state. The action with the hightest value is our final target.
+
+                let mut new_values = [0.0; 4];
+
+                for (i, direction) in DIRECTIONS.iter().enumerate() {
+                    let actions = self.world.transition(&state, Action::Move(*direction));
+
+                    if let Some(actions) = actions {
+                        for entry in actions {
+                            if let Action::Move(direction) = entry.1 {
+                                let target = self.world.move_to(&state, direction);
+                                new_values[i] += entry.0
+                                    * (self.world.reward(&state, entry.1)
+                                        + self.gamma
+                                            * values[target.y * self.world.width + target.x]);
+                            }
+                        }
+                    }
                 }
-            }
-            Direction::Right if state.x < self.world.width - 1 => {
-                if self.world.is_valid(state.x + 1, state.y) {
-                    return State::new(state.x + 1, state.y);
+
+                // Find the highest value.
+                let mut max = new_values[0];
+                for i in 1..new_values.len() {
+                    if new_values[i] > max {
+                        max = new_values[i]
+                    }
                 }
-            }
-            _ => {
-                return State::new(state.x, state.y);
-            }
-        }
 
-        State::new(state.x, state.y)
-    }
+                self.world.q_values[index] = new_values;
 
-    fn get_moves(&self, direction: Direction) -> [Direction; 3] {
-        match direction {
-            Direction::Up | Direction::Down => [direction, Direction::Left, Direction::Right],
-            Direction::Right | Direction::Left => [direction, Direction::Up, Direction::Down],
-        }
-    }
-
-    fn can_exit(&self, state: &State) -> bool {
-        match state {
-            State { x: 3, y: 0 } => true,
-            State { x: 3, y: 1 } => true,
-            _ => false,
-        }
-    }
-
-    fn reward(&self, action: Action) -> f32 {
-        match action {
-            Action::Move(_) => {
-                return 0.0;
-            }
-            Action::Exit(state) => {
-                return match state {
-                    State { x: 3, y: 0 } => 1.0,
-                    State { x: 3, y: 1 } => -1.0,
-                    _ => 0.0,
-                };
+                result[index] = max;
             }
         }
+
+        result
     }
 
-    fn value_iteration(&mut self, epsilon: f32) -> (Vec<f32>, Vec<Policy>) {
-        let mut values = vec![0.0; self.world.len()];
+    fn value_iteration(&mut self, epsilon: f32) -> (Vec<Action>, Vec<f32>) {
+        let mut values = vec![0.0; self.world.area()];
 
         let mut iterations = 0;
         loop {
@@ -285,19 +351,19 @@ impl Game {
             }
         }
 
-        let mut policy = vec![Policy::None; self.world.len()];
+        let mut policy = vec![Action::None; self.world.area()];
         for y in 0..self.world.height {
             for x in 0..self.world.width {
                 let index = y * self.world.width + x;
                 let state = State::new(x, y);
 
-                if !self.world.is_valid(x, y) {
-                    policy[index] = Policy::None;
+                if !self.world.valid_position(&state) {
+                    policy[index] = Action::None;
                     continue;
                 }
 
-                if self.can_exit(&&state) {
-                    policy[index] = Policy::Exit;
+                if self.world.can_exit(&state) {
+                    policy[index] = Action::Exit;
                     continue;
                 }
 
@@ -308,92 +374,14 @@ impl Game {
                     }
                 }
 
-                let direction = match target {
-                    0 => Direction::Up,
-                    1 => Direction::Right,
-                    2 => Direction::Down,
-                    3 => Direction::Left,
-                    _ => panic!("???"),
-                };
-
-                policy[index] = Policy::Move(direction);
+                policy[index] = Action::Move(DIRECTIONS[target]);
             }
         }
 
-        (values, policy)
+        (policy, values)
     }
 
-    fn value_bellman(&mut self, values: &Vec<f32>) -> Vec<f32> {
-        let mut result = vec![0.0; values.len()];
-
-        let directions = [
-            Direction::Up,
-            Direction::Right,
-            Direction::Down,
-            Direction::Left,
-        ];
-
-        for y in 0..self.world.height {
-            for x in 0..self.world.width {
-                let index = y * self.world.width + x;
-                let state = State::new(x, y);
-
-                // If we happen to be in an invalid position then stop!
-                if !self.world.is_valid(state.x, state.y) {
-                    result[index] = 0.0;
-                    continue;
-                }
-
-                // If we can exit then we must exit.
-                if self.can_exit(&state) {
-                    result[index] = self.reward(Action::Exit(&state));
-                    continue;
-                }
-
-                // We need to find the optimal policy.
-                // In order to do so we must recursively find the expected value for each possible action in the
-                // current state. The action with the hightest value is our final target.
-
-                // T(s,a,s') * [R(s,a,s') + gamma * V(s', depth - 1)]
-
-                let mut new_values: [f32; 4] = [0.0; 4];
-
-                for (i, direction) in directions.iter().enumerate() {
-                    let moves = self.get_moves(*direction);
-                    let target = self.move_to(&state, moves[0]);
-                    let misstep_a = self.move_to(&state, moves[1]);
-                    let misstep_b = self.move_to(&state, moves[2]);
-                    new_values[i] = 0.8
-                        * (self.reward(Action::Move(&target))
-                            + self.gamma * values[target.y * self.world.width + target.x])
-                        + 0.1
-                            * (self.reward(Action::Move(&misstep_a))
-                                + self.gamma
-                                    * values[misstep_a.y * self.world.width + misstep_a.x])
-                        + 0.1
-                            * (self.reward(Action::Move(&misstep_b))
-                                + self.gamma
-                                    * values[misstep_b.y * self.world.width + misstep_b.x]);
-                }
-
-                // Find the highest value.
-                let mut max = new_values[0];
-                for i in 1..new_values.len() {
-                    if new_values[i] > max {
-                        max = new_values[i]
-                    }
-                }
-
-                self.world.q_values[index] = new_values;
-
-                result[index] = max;
-            }
-        }
-
-        result
-    }
-
-    fn policy_bellman(&mut self, policy: &Vec<Policy>, values: &Vec<f32>) -> Vec<f32> {
+    fn policy_bellman(&mut self, policy: &Vec<Action>, values: &Vec<f32>) -> Vec<f32> {
         let mut result = vec![0.0; values.len()];
 
         for y in 0..self.world.height {
@@ -402,23 +390,22 @@ impl Game {
                 let state = State::new(x, y);
 
                 result[index] = match policy[index] {
-                    Policy::Exit => self.reward(Action::Exit(&state)),
-                    Policy::Move(direction) => {
-                        let moves = self.get_moves(direction);
-                        let target = self.move_to(&state, moves[0]);
-                        let misstep_a = self.move_to(&state, moves[1]);
-                        let misstep_b = self.move_to(&state, moves[2]);
-                        let value = 0.8
-                            * (self.reward(Action::Move(&target))
-                                + self.gamma * values[target.y * self.world.width + target.x])
-                            + 0.1
-                                * (self.reward(Action::Move(&misstep_a))
-                                    + self.gamma
-                                        * values[misstep_a.y * self.world.width + misstep_a.x])
-                            + 0.1
-                                * (self.reward(Action::Move(&misstep_b))
-                                    + self.gamma
-                                        * values[misstep_b.y * self.world.width + misstep_b.x]);
+                    Action::Exit => self.world.reward(&state, policy[index]),
+                    Action::Move(direction) => {
+                        let actions = self.world.transition(&state, Action::Move(direction));
+
+                        let mut value = 0.0;
+                        if let Some(actions) = actions {
+                            for entry in actions {
+                                if let Action::Move(direction) = entry.1 {
+                                    let target = self.world.move_to(&state, direction);
+                                    value += entry.0
+                                        * (self.world.reward(&state, entry.1)
+                                            + self.gamma
+                                                * values[target.y * self.world.width + target.x]);
+                                }
+                            }
+                        }
 
                         match direction {
                             Direction::Up => self.world.q_values[index][0] = value,
@@ -429,7 +416,7 @@ impl Game {
 
                         value
                     }
-                    Policy::None => 0.0,
+                    Action::None => 0.0,
                 };
             }
         }
@@ -437,15 +424,8 @@ impl Game {
         result
     }
 
-    fn policy_improvement(&self, policy: &Vec<Policy>, values: &Vec<f32>) -> Vec<Policy> {
-        let mut new_policy = vec![Policy::None; self.world.len()];
-
-        let directions = [
-            Direction::Up,
-            Direction::Right,
-            Direction::Down,
-            Direction::Left,
-        ];
+    fn policy_improvement(&self, policy: &Vec<Action>, values: &Vec<f32>) -> Vec<Action> {
+        let mut new_policy = vec![Action::None; self.world.area()];
 
         for y in 0..self.world.height {
             for x in 0..self.world.width {
@@ -453,13 +433,13 @@ impl Game {
                 let state = State::new(x, y);
 
                 new_policy[index] = match policy[index] {
-                    Policy::Exit => Policy::Exit,
-                    Policy::Move(direction) => {
+                    Action::Exit => policy[index],
+                    Action::Move(direction) => {
                         let mut optimal = direction;
                         let mut max = f32::MIN;
 
-                        for direction in directions.iter() {
-                            let temp = self.move_to(&state, *direction);
+                        for direction in DIRECTIONS.iter() {
+                            let temp = self.world.move_to(&state, *direction);
                             let value = values[temp.y * self.world.width + temp.x];
                             if value > max {
                                 max = value;
@@ -467,9 +447,9 @@ impl Game {
                             }
                         }
 
-                        Policy::Move(optimal)
+                        Action::Move(optimal)
                     }
-                    Policy::None => Policy::None,
+                    Action::None => policy[index],
                 };
             }
         }
@@ -477,28 +457,27 @@ impl Game {
         new_policy
     }
 
-    fn policy_iteration(&mut self, epsilon: f32) -> (Vec<f32>, Vec<Policy>) {
+    fn policy_iteration(&mut self, epsilon: f32) -> (Vec<Action>, Vec<f32>) {
         // Create a valid random policy.
-        let mut policy = Vec::with_capacity(self.world.len());
+        let mut policy = Vec::with_capacity(self.world.area());
         for y in 0..self.world.height {
             for x in 0..self.world.width {
                 let state = State::new(x, y);
-
-                if !self.world.is_valid(x, y) {
-                    policy.push(Policy::None);
+                if !self.world.valid_position(&state) {
+                    policy.push(Action::None);
                     continue;
                 }
-                if self.can_exit(&state) {
-                    policy.push(Policy::Exit);
+                if self.world.can_exit(&state) {
+                    policy.push(Action::Exit);
                     continue;
                 }
 
                 // TODO: this works, but what would happen if the policy was truly random?
-                policy.push(Policy::Move(Direction::Up));
+                policy.push(Action::Move(Direction::Up));
             }
         }
 
-        let mut values = vec![0.0; self.world.len()];
+        let mut values = vec![0.0; self.world.area()];
 
         let mut iterations = 0;
         'outer: loop {
@@ -539,7 +518,7 @@ impl Game {
             }
         }
 
-        (values, policy)
+        (policy, values)
     }
 
     fn calculate_color(&self, value: f32) -> Color {
