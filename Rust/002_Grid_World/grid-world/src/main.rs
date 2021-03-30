@@ -1,4 +1,5 @@
 mod game;
+mod world;
 use game::Game;
 use rna::*;
 
