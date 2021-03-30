@@ -48,6 +48,114 @@ impl World {
         }
     }
 
+    pub fn load(file: &str) -> Result<World, Box<dyn std::error::Error>> {
+        let mut width = 0;
+        let mut height = 0;
+        let mut walls = Vec::new();
+        let mut exits = Vec::new();
+
+        let data = std::fs::read_to_string(file).unwrap();
+
+        let lines = data.split("\n");
+        for line in lines {
+            let line = line.trim();
+            if line.starts_with("#") {
+                continue;
+            }
+
+            if line.starts_with("Dimension") {
+                let mut temp = line.split_whitespace();
+                temp.next();
+                let data = temp.next().ok_or("Expected more than one entry.")?;
+                let values: Vec<&str> = data.split(",").collect();
+
+                width = values
+                    .get(0)
+                    .ok_or("Could not get width.")
+                    .and_then(|value| {
+                        value
+                            .parse::<usize>()
+                            .map_err(|_| "Could not parse width as usize.")
+                    })?;
+
+                height = values
+                    .get(1)
+                    .ok_or("Could not get height")
+                    .and_then(|value| {
+                        value
+                            .parse::<usize>()
+                            .map_err(|_| "Cound not parse height as usize.")
+                    })?;
+
+                continue;
+            }
+
+            if line.starts_with("Wall") {
+                let mut temp = line.split_whitespace();
+                temp.next();
+                let data = temp.next().ok_or("Expected more than one entry.")?;
+                let values: Vec<&str> = data.split(",").collect();
+
+                let x = values.get(0).ok_or("Could not get x.").and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "Could not parse x as usize.")
+                })?;
+
+                let y = values.get(1).ok_or("Could not get y").and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "Cound not parse y as usize.")
+                })?;
+
+                walls.push((x, y));
+                continue;
+            }
+
+            if line.starts_with("Exit") {
+                let mut temp = line.split_whitespace();
+                temp.next();
+                let data = temp.next().ok_or("Expected more than one entry.")?;
+                let values: Vec<&str> = data.split(",").collect();
+
+                let x = values.get(0).ok_or("Could not get x.").and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "Could not parse x as usize.")
+                })?;
+
+                let y = values.get(1).ok_or("Could not get y").and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "Cound not parse y as usize.")
+                })?;
+
+                let reward = values
+                    .get(2)
+                    .ok_or("Could not get reward")
+                    .and_then(|value| {
+                        value
+                            .parse::<f32>()
+                            .map_err(|_| "Cound not parse reward as f32.")
+                    })?;
+
+                exits.push((x, y, reward));
+                continue;
+            }
+        }
+
+        let mut world = World::new(width, height);
+
+        for wall in walls {
+            world.add_wall(wall.0, wall.1);
+        }
+        for exit in exits {
+            world.add_exit(exit.0, exit.1, exit.2);
+        }
+
+        Ok(world)
+    }
+
     pub fn area(&self) -> usize {
         self.width * self.height
     }
@@ -361,12 +469,7 @@ impl World {
         new_policy
     }
 
-    pub fn policy_iteration(
-        &mut self,
-        discount: f32,
-        noise: f32,
-        epsilon: f32,
-    ) -> Analysis {
+    pub fn policy_iteration(&mut self, discount: f32, noise: f32, epsilon: f32) -> Analysis {
         // Create a valid random policy.
         let mut policy = Vec::with_capacity(self.area());
         for y in 0..self.height {

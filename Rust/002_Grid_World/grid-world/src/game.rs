@@ -56,6 +56,13 @@ impl Game {
     pub fn new(mut args: std::env::Args) -> Self {
         args.next();
 
+        let mut world = World::new(4, 3);
+        world.add_wall(1, 1);
+        world.add_exit(3, 0, 1.0);
+        world.add_exit(3, 1, -1.0);
+
+        let mut world = World::load("world.txt").unwrap_or(world);
+
         let discount = args
             .next()
             .unwrap_or(String::from("0.9"))
@@ -74,12 +81,7 @@ impl Game {
             .parse::<f32>()
             .unwrap_or(0.0001);
 
-        let mut world = World::new(4, 3);
-        world.add_wall(1, 1);
-        world.add_exit(3, 0, 1.0);
-        world.add_exit(3, 1, -1.0);
-
-        let analysis = world.policy_iteration(discount, noise, epsilon);
+        let analysis = world.value_iteration(discount, noise, epsilon);
 
         Game {
             camera: Camera2D {
