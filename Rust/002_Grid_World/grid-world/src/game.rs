@@ -56,6 +56,7 @@ impl Game {
     pub fn new(mut args: std::env::Args) -> Self {
         args.next();
 
+        let mut mode = String::from("value");
         let mut discount = 0.9;
         let mut noise = 0.8;
         let mut epsilon = 0.0001;
@@ -65,6 +66,9 @@ impl Game {
         for i in (0..args.len()).step_by(2) {
             if let (Some(flag), Some(value)) = (args.get(i), args.get(i + 1)) {
                 match flag.as_str() {
+                    "-M" | "--mode" => {
+                        mode = value.to_lowercase();
+                    }
                     "-D" | "--discount" => {
                         discount = value.parse::<f32>().unwrap_or(discount);
                     }
@@ -89,7 +93,10 @@ impl Game {
 
         let mut world = World::load(path.as_str()).unwrap_or(world);
 
-        let analysis = world.value_iteration(discount, noise, epsilon);
+        let analysis = match mode.as_str() {
+            "policy" => world.policy_iteration(discount, noise, epsilon),
+            _ => world.value_iteration(discount, noise, epsilon),
+        };
 
         Game {
             camera: Camera2D {
