@@ -48,13 +48,13 @@ impl World {
         }
     }
 
-    pub fn load(file: &str) -> Result<World, Box<dyn std::error::Error>> {
+    pub fn load(path: &str) -> Result<World, Box<dyn std::error::Error>> {
         let mut width = 0;
         let mut height = 0;
         let mut walls = Vec::new();
         let mut exits = Vec::new();
 
-        let data = std::fs::read_to_string(file).unwrap();
+        let data = std::fs::read_to_string(path)?;
 
         let lines = data.split("\n");
         for line in lines {
