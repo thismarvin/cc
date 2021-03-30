@@ -56,30 +56,38 @@ impl Game {
     pub fn new(mut args: std::env::Args) -> Self {
         args.next();
 
+        let mut discount = 0.9;
+        let mut noise = 0.8;
+        let mut epsilon = 0.0001;
+        let mut path = String::new();
+
+        let args: Vec<String> = args.collect();
+        for i in (0..args.len()).step_by(2) {
+            if let (Some(flag), Some(value)) = (args.get(i), args.get(i + 1)) {
+                match flag.as_str() {
+                    "-D" | "--discount" => {
+                        discount = value.parse::<f32>().unwrap_or(discount);
+                    }
+                    "-N" | "--noise" => {
+                        noise = value.parse::<f32>().unwrap_or(noise);
+                    }
+                    "-E" | "--epsilon" => {
+                        epsilon = value.parse::<f32>().unwrap_or(epsilon);
+                    }
+                    "-P" | "--path" => {
+                        path = String::from(value);
+                    }
+                    _ => (),
+                }
+            }
+        }
+
         let mut world = World::new(4, 3);
         world.add_wall(1, 1);
         world.add_exit(3, 0, 1.0);
         world.add_exit(3, 1, -1.0);
 
-        let mut world = World::load("world.txt").unwrap_or(world);
-
-        let discount = args
-            .next()
-            .unwrap_or(String::from("0.9"))
-            .parse::<f32>()
-            .unwrap_or(0.9);
-
-        let noise = args
-            .next()
-            .unwrap_or(String::from("0.8"))
-            .parse::<f32>()
-            .unwrap_or(0.8);
-
-        let epsilon = args
-            .next()
-            .unwrap_or(String::from("0.0001"))
-            .parse::<f32>()
-            .unwrap_or(0.0001);
+        let mut world = World::load(path.as_str()).unwrap_or(world);
 
         let analysis = world.value_iteration(discount, noise, epsilon);
 
