@@ -1,4 +1,4 @@
-use crate::world::{Action, Analysis, State, World};
+use crate::world::{Action, Analysis, Direction, State, World};
 use raylib::prelude::*;
 use rna::*;
 
@@ -6,50 +6,7 @@ pub struct Game {
     camera: Camera2D,
     world: World,
     analysis: Analysis,
-}
-
-impl Core for Game {
-    fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {}
-    fn update(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {}
-    fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
-        let mut d = d.begin_mode2D(self.camera);
-        d.clear_background(Color::new(0, 0, 0, 255));
-
-        let size: usize = 150;
-
-        for y in 0..self.world.height {
-            for x in 0..self.world.width {
-                let state = State::new(x, y);
-                if self.world.valid_position(&state) {
-                    if self.world.can_exit(&state) {
-                        let value = self.world.reward(&state, Action::Exit);
-                        d.draw_rectangle(
-                            x as i32 * size as i32,
-                            y as i32 * size as i32,
-                            size as i32,
-                            size as i32,
-                            self.calculate_color(value),
-                        );
-                        d.draw_text(
-                            format!("{:5.2}", value).as_str(),
-                            x as i32 * size as i32 + (size as f32 * 0.18) as i32,
-                            y as i32 * size as i32 + (size as f32 * 0.38) as i32,
-                            40,
-                            Color::WHITE,
-                        );
-                    } else {
-                        self.draw_cell(
-                            &mut d,
-                            y * self.world.width + x,
-                            x as f32 * size as f32,
-                            y as f32 * size as f32,
-                            size,
-                        );
-                    }
-                }
-            }
-        }
-    }
+    show_policy: bool,
 }
 
 impl Game {
@@ -107,6 +64,7 @@ impl Game {
             },
             world,
             analysis,
+            show_policy: false,
         }
     }
 
@@ -151,7 +109,6 @@ impl Game {
         y: f32,
         size: usize,
     ) {
-        let font_size = 20;
         let q_values = self.analysis.q_values[index];
 
         d.draw_triangle(
@@ -178,34 +135,226 @@ impl Game {
             Vector2::new(x as f32, y as f32),
             self.calculate_color(q_values[3]),
         );
+    }
+}
 
-        d.draw_text(
-            format!("{:5.2}", q_values[0]).as_str(),
-            x as i32 + (size as f32 * 0.3) as i32,
-            y as i32 + (size as f32 * 0.05) as i32,
-            font_size,
-            Color::WHITE,
-        );
-        d.draw_text(
-            format!("{:5.2}", q_values[1]).as_str(),
-            x as i32 + (size as f32 * 0.63) as i32,
-            y as i32 + (size as f32 * 0.45) as i32,
-            20,
-            Color::WHITE,
-        );
-        d.draw_text(
-            format!("{:5.2}", q_values[2]).as_str(),
-            x as i32 + (size as f32 * 0.3) as i32,
-            y as i32 + (size as f32 * 0.83) as i32,
-            20,
-            Color::WHITE,
-        );
-        d.draw_text(
-            format!("{:5.2}", q_values[3]).as_str(),
-            x as i32 + (size as f32 * 0.01) as i32,
-            y as i32 + (size as f32 * 0.45) as i32,
-            font_size,
-            Color::WHITE,
-        );
+impl Core for Game {
+    fn initialize(&mut self, _: &mut RaylibHandle, _: &RaylibThread) {}
+    fn update(&mut self, r: &mut RaylibHandle, _: &RaylibThread) {
+        if r.is_key_pressed(KeyboardKey::KEY_SPACE) {
+            self.show_policy = !self.show_policy;
+        }
+    }
+    fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
+        let mut d = d.begin_mode2D(self.camera);
+        d.clear_background(Color::new(0, 0, 0, 255));
+
+        let size = d.get_screen_width() as usize / self.world.width;
+        let size = size.min(d.get_screen_height() as usize / self.world.height);
+        let x_offset = (d.get_screen_width() as usize - self.world.width * size) / 2;
+        let y_offset = (d.get_screen_height() as usize - self.world.height * size) / 2;
+
+        for y in 0..self.world.height {
+            for x in 0..self.world.width {
+                let state = State::new(x, y);
+                if self.world.valid_position(&state) {
+                    if self.world.can_exit(&state) {
+                        let value = self.world.reward(&state, Action::Exit);
+                        d.draw_rectangle(
+                            x as i32 * size as i32 + x_offset as i32,
+                            y as i32 * size as i32 + y_offset as i32,
+                            size as i32,
+                            size as i32,
+                            self.calculate_color(value),
+                        );
+                    } else {
+                        self.draw_cell(
+                            &mut d,
+                            y * self.world.width + x,
+                            x as f32 * size as f32 + x_offset as f32,
+                            y as f32 * size as f32 + y_offset as f32,
+                            size,
+                        );
+                    }
+
+                    if !self.show_policy {
+                        continue;
+                    }
+
+                    match self.analysis.policy[y * self.world.width + x] {
+                        Action::Exit => {
+                            let padding = (size as f32 * 0.07) as i32;
+                            let thickness = (size as f32 * 0.05) as i32;
+                            let thickness = 1.max(thickness);
+                            d.draw_rectangle_lines_ex(
+                                Rectangle::new(
+                                    x as f32 * size as f32 + x_offset as f32 + padding as f32,
+                                    y as f32 * size as f32 + y_offset as f32 + padding as f32,
+                                    size as f32 - padding as f32 * 2.0,
+                                    size as f32 - padding as f32 * 2.0,
+                                ),
+                                thickness,
+                                Color::new(255, 255, 255, 155),
+                            )
+                        }
+                        Action::Move(direction) => match direction {
+                            Direction::Up => {
+                                d.draw_triangle(
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.2
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.4
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.8
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.4
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.5
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.1
+                                            + y_offset as f32,
+                                    ),
+                                    Color::new(255, 255, 255, 155),
+                                );
+                                d.draw_rectangle(
+                                    (x as f32 * size as f32 + size as f32 * 0.35 + x_offset as f32)
+                                        .round() as i32,
+                                    (y as f32 * size as f32 + size as f32 * 0.4 + y_offset as f32)
+                                        .round() as i32,
+                                    (size as f32 * 0.3) as i32,
+                                    (size as f32 * 0.5) as i32,
+                                    Color::new(255, 255, 255, 155),
+                                )
+                            }
+                            Direction::Right => {
+                                d.draw_triangle(
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.6
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.2
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.6
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.8
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.9
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.5
+                                            + y_offset as f32,
+                                    ),
+                                    Color::new(255, 255, 255, 155),
+                                );
+                                d.draw_rectangle(
+                                    (x as f32 * size as f32 + size as f32 * 0.1 + x_offset as f32)
+                                        .round() as i32,
+                                    (y as f32 * size as f32 + size as f32 * 0.35 + y_offset as f32)
+                                        .round() as i32,
+                                    (size as f32 * 0.5) as i32,
+                                    (size as f32 * 0.3) as i32,
+                                    Color::new(255, 255, 255, 155),
+                                )
+                            }
+                            Direction::Down => {
+                                d.draw_triangle(
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.2
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.6
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.5
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.9
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.8
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.6
+                                            + y_offset as f32,
+                                    ),
+                                    Color::new(255, 255, 255, 155),
+                                );
+                                d.draw_rectangle(
+                                    (x as f32 * size as f32 + size as f32 * 0.35 + x_offset as f32)
+                                        .round() as i32,
+                                    (y as f32 * size as f32 + size as f32 * 0.1 + y_offset as f32)
+                                        .round() as i32,
+                                    (size as f32 * 0.3) as i32,
+                                    (size as f32 * 0.5) as i32,
+                                    Color::new(255, 255, 255, 155),
+                                )
+                            }
+                            Direction::Left => {
+                                d.draw_triangle(
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.4
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.2
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.1
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.5
+                                            + y_offset as f32,
+                                    ),
+                                    Vector2::new(
+                                        x as f32 * size as f32
+                                            + size as f32 * 0.4
+                                            + x_offset as f32,
+                                        y as f32 * size as f32
+                                            + size as f32 * 0.8
+                                            + y_offset as f32,
+                                    ),
+                                    Color::new(255, 255, 255, 155),
+                                );
+                                d.draw_rectangle(
+                                    (x as f32 * size as f32 + size as f32 * 0.4 + x_offset as f32)
+                                        .round() as i32,
+                                    (y as f32 * size as f32 + size as f32 * 0.35 + y_offset as f32)
+                                        .round() as i32,
+                                    (size as f32 * 0.5) as i32,
+                                    (size as f32 * 0.3) as i32,
+                                    Color::new(255, 255, 255, 155),
+                                )
+                            }
+                        },
+                        Action::None => (),
+                    }
+                }
+            }
+        }
     }
 }
