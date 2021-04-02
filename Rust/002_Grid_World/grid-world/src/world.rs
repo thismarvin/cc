@@ -11,10 +11,10 @@ impl State {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
+    Up = 0,
+    Down = 1,
+    Left = 2,
+    Right = 3,
 }
 
 const DIRECTIONS: [Direction; 4] = [
@@ -231,6 +231,35 @@ impl World {
         }
     }
 
+    fn value(
+        &self,
+        state: &State,
+        action: Action,
+        discount: f32,
+        noise: f32,
+        values: &Vec<f32>,
+    ) -> f32 {
+        return match action {
+            Action::Exit => self.reward(&state, action),
+            Action::Move(_) => {
+                let actions = self.transition(&state, action, noise);
+                let mut accumulation = 0.0;
+                if let Some(actions) = actions {
+                    for entry in actions {
+                        if let Action::Move(direction) = entry.1 {
+                            let target = self.move_to(&state, direction);
+                            accumulation += entry.0
+                                * (self.reward(&state, entry.1)
+                                    + discount * values[target.y * self.width + target.x]);
+                        }
+                    }
+                }
+                accumulation
+            }
+            Action::None => 0.0,
+        };
+    }
+
     pub fn move_to(&self, state: &State, direction: Direction) -> State {
         match direction {
             Direction::Up if state.y > 0 => {
@@ -268,8 +297,62 @@ impl World {
         }
     }
 
-    fn value_bellman(
-        &mut self,
+    pub fn generate_policy(&self, q_values: &Vec<[f32; 4]>) -> Vec<Action> {
+        let mut policy = vec![Action::None; self.area()];
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let index = y * self.width + x;
+                let state = State::new(x, y);
+
+                if !self.valid_position(&state) {
+                    policy[index] = Action::None;
+                    continue;
+                }
+
+                if self.can_exit(&state) {
+                    policy[index] = Action::Exit;
+                    continue;
+                }
+
+                let mut target = 0;
+                for i in 1..q_values[index].len() {
+                    if q_values[index][i] > q_values[index][target] {
+                        target = i;
+                    }
+                }
+
+                policy[index] = Action::Move(DIRECTIONS[target]);
+            }
+        }
+
+        policy
+    }
+
+    pub fn generate_random_policy(&self) -> Vec<Action> {
+        // Create a valid random policy.
+        let mut policy = Vec::with_capacity(self.area());
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let state = State::new(x, y);
+                if !self.valid_position(&state) {
+                    policy.push(Action::None);
+                    continue;
+                }
+                if self.can_exit(&state) {
+                    policy.push(Action::Exit);
+                    continue;
+                }
+
+                // TODO: this works, but what would happen if the policy was truly random?
+                policy.push(Action::Move(Direction::Up));
+            }
+        }
+
+        policy
+    }
+
+    pub fn value_bellman_update(
+        &self,
         discount: f32,
         noise: f32,
         values: &Vec<f32>,
@@ -300,18 +383,8 @@ impl World {
                 let mut new_values = [0.0; 4];
 
                 for (i, direction) in DIRECTIONS.iter().enumerate() {
-                    let actions = self.transition(&state, Action::Move(*direction), noise);
-
-                    if let Some(actions) = actions {
-                        for entry in actions {
-                            if let Action::Move(direction) = entry.1 {
-                                let target = self.move_to(&state, direction);
-                                new_values[i] += entry.0
-                                    * (self.reward(&state, entry.1)
-                                        + discount * values[target.y * self.width + target.x]);
-                            }
-                        }
-                    }
+                    new_values[i] =
+                        self.value(&state, Action::Move(*direction), discount, noise, values)
                 }
 
                 // Find the highest value.
@@ -330,7 +403,7 @@ impl World {
         result
     }
 
-    pub fn value_iteration(&mut self, discount: f32, noise: f32, epsilon: f32) -> Analysis {
+    pub fn value_iteration(&mut self, discount: f32, noise: f32, epsilon: f32) -> Vec<Action> {
         let mut values = vec![0.0; self.area()];
         let mut q_values = vec![[0.0; 4]; self.area()];
 
@@ -339,7 +412,7 @@ impl World {
             // Loop until convergence.
             iterations += 1;
 
-            let temp = self.value_bellman(discount, noise, &values, &mut q_values);
+            let temp = self.value_bellman_update(discount, noise, &values, &mut q_values);
             let deltas = temp.iter().enumerate().map(|(i, v)| *v - values[i]);
 
             let mut max_delta = f32::MIN;
@@ -356,38 +429,10 @@ impl World {
             }
         }
 
-        // Now that the values have converged, we can use said values to find the optimal policy.
-        let mut policy = vec![Action::None; self.area()];
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let index = y * self.width + x;
-                let state = State::new(x, y);
-
-                if !self.valid_position(&state) {
-                    policy[index] = Action::None;
-                    continue;
-                }
-
-                if self.can_exit(&state) {
-                    policy[index] = Action::Exit;
-                    continue;
-                }
-
-                let mut target = 0;
-                for i in 1..q_values[index].len() {
-                    if q_values[index][i] > q_values[index][target] {
-                        target = i;
-                    }
-                }
-
-                policy[index] = Action::Move(DIRECTIONS[target]);
-            }
-        }
-
-        Analysis::new(policy, values, q_values)
+        self.generate_policy(&q_values)
     }
 
-    fn policy_bellman(
+    pub fn policy_bellman_update(
         &mut self,
         discount: f32,
         noise: f32,
@@ -402,136 +447,128 @@ impl World {
                 let index = y * self.width + x;
                 let state = State::new(x, y);
 
-                result[index] = match policy[index] {
-                    Action::Exit => self.reward(&state, policy[index]),
-                    Action::Move(direction) => {
-                        let actions = self.transition(&state, Action::Move(direction), noise);
+                let q = self.value(&state, policy[index], discount, noise, values);
 
-                        let mut value = 0.0;
-                        if let Some(actions) = actions {
-                            for entry in actions {
-                                if let Action::Move(direction) = entry.1 {
-                                    let target = self.move_to(&state, direction);
-                                    value += entry.0
-                                        * (self.reward(&state, entry.1)
-                                            + discount * values[target.y * self.width + target.x]);
-                                }
-                            }
-                        }
-
-                        match direction {
-                            Direction::Up => q_values[index][0] = value,
-                            Direction::Right => q_values[index][1] = value,
-                            Direction::Down => q_values[index][2] = value,
-                            Direction::Left => q_values[index][3] = value,
-                        }
-
-                        value
-                    }
-                    Action::None => 0.0,
-                };
+                if let Action::Move(direction) = policy[index] {
+                    q_values[index][direction as usize] = q;
+                }
+                result[index] = q;
             }
         }
 
         result
     }
 
-    fn policy_improvement(&self, policy: &Vec<Action>, values: &Vec<f32>) -> Vec<Action> {
-        let mut new_policy = vec![Action::None; self.area()];
+    pub fn policy_evaluation(
+        &mut self,
+        discount: f32,
+        noise: f32,
+        epsilon: f32,
+        policy: &Vec<Action>,
+        values: &Vec<f32>,
+        mut q_values: &mut Vec<[f32; 4]>,
+    ) -> Vec<f32> {
+        let mut result = values.clone();
+        let mut iterations = 0;
+        // Loop until convergence.
+        loop {
+            iterations += 1;
+            let temp = self.policy_bellman_update(discount, noise, &policy, &result, &mut q_values);
+            let deltas = temp.iter().enumerate().map(|(i, v)| *v - result[i]);
+
+            let mut max_delta = f32::MIN;
+            for delta in deltas {
+                if delta > max_delta {
+                    max_delta = delta;
+                }
+            }
+
+            result = temp;
+
+            if max_delta.abs() < epsilon && iterations > 1 {
+                return result;
+            }
+        }
+    }
+
+    pub fn policy_improvement(
+        &self,
+        discount: f32,
+        noise: f32,
+        policy: &Vec<Action>,
+        values: &Vec<f32>,
+    ) -> (Vec<Action>, bool) {
+        let mut result = vec![Action::None; policy.len()];
 
         for y in 0..self.height {
             for x in 0..self.width {
                 let index = y * self.width + x;
                 let state = State::new(x, y);
 
-                new_policy[index] = match policy[index] {
-                    Action::Exit => policy[index],
-                    Action::Move(direction) => {
-                        let mut optimal = direction;
-                        let mut max = f32::MIN;
+                result[index] = match policy[index] {
+                    Action::Exit | Action::None => policy[index],
+                    Action::Move(_) => {
+                        // TODO: This should be extracted into a function some how! Value iteration basically uses the same exact thing!
+                        let mut new_values = [0.0; 4];
 
-                        for direction in DIRECTIONS.iter() {
-                            let temp = self.move_to(&state, *direction);
-                            let value = values[temp.y * self.width + temp.x];
-                            if value > max {
-                                max = value;
-                                optimal = *direction;
+                        for (i, direction) in DIRECTIONS.iter().enumerate() {
+                            new_values[i] = self.value(
+                                &state,
+                                Action::Move(*direction),
+                                discount,
+                                noise,
+                                values,
+                            );
+                        }
+
+                        let mut target = 0;
+                        for i in 1..new_values.len() {
+                            if new_values[i] > new_values[target] {
+                                target = i;
                             }
                         }
 
-                        Action::Move(optimal)
+                        Action::Move(DIRECTIONS[target])
                     }
-                    Action::None => policy[index],
                 };
             }
         }
 
-        new_policy
-    }
+        let mut stable = false;
 
-    pub fn policy_iteration(&mut self, discount: f32, noise: f32, epsilon: f32) -> Analysis {
-        // Create a valid random policy.
-        let mut policy = Vec::with_capacity(self.area());
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let state = State::new(x, y);
-                if !self.valid_position(&state) {
-                    policy.push(Action::None);
-                    continue;
-                }
-                if self.can_exit(&state) {
-                    policy.push(Action::Exit);
-                    continue;
-                }
+        for i in 0..policy.len() {
+            if !(result[i] == policy[i]) {
+                // The policy is not stable; another pass of policy iteration -- using the new
+                // policy -- is required.
+                break;
+            }
 
-                // TODO: this works, but what would happen if the policy was truly random?
-                policy.push(Action::Move(Direction::Up));
+            if i == policy.len() - 1 {
+                // The policy is stable; policy iteration is complete.
+                stable = true;
             }
         }
 
+        (result, stable)
+    }
+
+    pub fn policy_iteration(&mut self, discount: f32, noise: f32, epsilon: f32) -> Vec<Action> {
+        let mut policy = self.generate_random_policy();
         let mut values = vec![0.0; self.area()];
         let mut q_values = vec![[0.0; 4]; self.area()];
 
-        let mut iterations = 0;
-        'outer: loop {
-            // Loop until convergence.
-            loop {
-                // Policy Evaluation:
-                iterations += 1;
-                let temp = self.policy_bellman(discount, noise, &policy, &values, &mut q_values);
-                let deltas = temp.iter().enumerate().map(|(i, v)| *v - values[i]);
+        loop {
+            values =
+                self.policy_evaluation(discount, noise, epsilon, &policy, &values, &mut q_values);
+            let (temp, stable) = self.policy_improvement(discount, noise, &policy, &values);
+            policy = temp;
 
-                let mut max_delta = f32::MIN;
-                for delta in deltas {
-                    if delta > max_delta {
-                        max_delta = delta;
-                    }
-                }
-
-                values = temp;
-
-                if max_delta.abs() < epsilon && iterations > 1 {
-                    break;
-                }
-            }
-
-            // Policy Improvement.
-            let temp = self.policy_improvement(&policy, &values);
-            for i in 0..policy.len() {
-                if !(temp[i] == policy[i]) {
-                    // The policy is not stable; another pass of policy iteration -- using the new
-                    // policy -- is required.
-                    policy = temp;
-                    break;
-                }
-                if i == policy.len() - 1 {
-                    // The policy is stable; policy iteration is complete.
-                    break 'outer;
-                }
+            if stable {
+                break;
             }
         }
 
-        Analysis::new(policy, values, q_values)
+        policy
     }
 }
 
@@ -544,7 +581,7 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    fn new(policy: Vec<Action>, values: Vec<f32>, q_values: Vec<[f32; 4]>) -> Self {
+    pub fn min(values: &Vec<f32>) -> f32 {
         let mut min_value = f32::MAX;
         for value in values.iter() {
             if *value < min_value {
@@ -552,6 +589,10 @@ impl Analysis {
             }
         }
 
+        min_value
+    }
+
+    pub fn max(values: &Vec<f32>) -> f32 {
         let mut max_value = f32::MIN;
         for value in values.iter() {
             if *value > max_value {
@@ -559,12 +600,6 @@ impl Analysis {
             }
         }
 
-        Analysis {
-            policy,
-            values,
-            q_values,
-            min_value,
-            max_value,
-        }
+        max_value
     }
 }

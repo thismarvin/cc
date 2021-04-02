@@ -2,11 +2,20 @@ use crate::world::{Action, Analysis, Direction, State, World};
 use raylib::prelude::*;
 use rna::*;
 
+enum Mode {
+    Value,
+    Policy,
+}
+
 pub struct Game {
     camera: Camera2D,
     world: World,
     analysis: Analysis,
+    mode: Mode,
+    discount: f32,
+    noise: f32,
     show_policy: bool,
+    accumulator: f32,
 }
 
 impl Game {
@@ -48,11 +57,24 @@ impl Game {
         world.add_exit(3, 0, 1.0);
         world.add_exit(3, 1, -1.0);
 
-        let mut world = World::load(path.as_str()).unwrap_or(world);
+        let world = World::load(path.as_str()).unwrap_or(world);
 
-        let analysis = match mode.as_str() {
-            "policy" => world.policy_iteration(discount, noise, epsilon),
-            _ => world.value_iteration(discount, noise, epsilon),
+        let mode = match mode.as_str() {
+            "policy" => Mode::Policy,
+            _ => Mode::Value,
+        };
+
+        let policy = match mode {
+            Mode::Policy => world.generate_random_policy(),
+            Mode::Value => vec![Action::None; world.area()],
+        };
+
+        let analysis = Analysis {
+            policy,
+            values: vec![0.0; world.area()],
+            q_values: vec![[0.0; 4]; world.area()],
+            min_value: 0.0,
+            max_value: 0.0,
         };
 
         Game {
@@ -64,7 +86,11 @@ impl Game {
             },
             world,
             analysis,
+            mode,
+            discount,
+            noise,
             show_policy: false,
+            accumulator: 0.0,
         }
     }
 
@@ -282,6 +308,44 @@ impl Core for Game {
     fn update(&mut self, r: &mut RaylibHandle, _: &RaylibThread) {
         if r.is_key_pressed(KeyboardKey::KEY_SPACE) {
             self.show_policy = !self.show_policy;
+        }
+
+        self.accumulator += r.get_frame_time();
+
+        if self.accumulator > 0.2 {
+            self.accumulator = 0.0;
+
+            // Look so the following isn't technically correct; however, doing it like this makes the visualization cooler!
+            match self.mode {
+                Mode::Value => {
+                    self.analysis.values = self.world.value_bellman_update(
+                        self.discount,
+                        self.noise,
+                        &self.analysis.values,
+                        &mut self.analysis.q_values,
+                    );
+                    self.analysis.policy = self.world.generate_policy(&self.analysis.q_values);
+                }
+                Mode::Policy => {
+                    self.analysis.values = self.world.policy_bellman_update(
+                        self.discount,
+                        self.noise,
+                        &self.analysis.policy,
+                        &self.analysis.values,
+                        &mut self.analysis.q_values,
+                    );
+                    let (temp, _) = self.world.policy_improvement(
+                        self.discount,
+                        self.noise,
+                        &self.analysis.policy,
+                        &self.analysis.values,
+                    );
+                    self.analysis.policy = temp;
+                }
+            }
+
+            self.analysis.min_value = Analysis::min(&self.analysis.values);
+            self.analysis.max_value = Analysis::max(&self.analysis.values);
         }
     }
     fn draw(&self, d: &mut RaylibDrawHandle, _: &RaylibThread) {
