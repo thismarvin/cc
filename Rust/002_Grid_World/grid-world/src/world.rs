@@ -438,7 +438,6 @@ impl World {
         noise: f32,
         policy: &Vec<Action>,
         values: &Vec<f32>,
-        q_values: &mut Vec<[f32; 4]>,
     ) -> Vec<f32> {
         let mut result = vec![0.0; values.len()];
 
@@ -447,12 +446,7 @@ impl World {
                 let index = y * self.width + x;
                 let state = State::new(x, y);
 
-                let q = self.value(&state, policy[index], discount, noise, values);
-
-                if let Action::Move(direction) = policy[index] {
-                    q_values[index][direction as usize] = q;
-                }
-                result[index] = q;
+                result[index] = self.value(&state, policy[index], discount, noise, values);
             }
         }
 
@@ -466,14 +460,13 @@ impl World {
         epsilon: f32,
         policy: &Vec<Action>,
         values: &Vec<f32>,
-        mut q_values: &mut Vec<[f32; 4]>,
     ) -> Vec<f32> {
         let mut result = values.clone();
         let mut iterations = 0;
         // Loop until convergence.
         loop {
             iterations += 1;
-            let temp = self.policy_bellman_update(discount, noise, &policy, &result, &mut q_values);
+            let temp = self.policy_bellman_update(discount, noise, &policy, &result);
             let deltas = temp.iter().enumerate().map(|(i, v)| *v - result[i]);
 
             let mut max_delta = f32::MIN;
@@ -497,6 +490,7 @@ impl World {
         noise: f32,
         policy: &Vec<Action>,
         values: &Vec<f32>,
+        q_values: &mut Vec<[f32; 4]>,
     ) -> (Vec<Action>, bool) {
         let mut result = vec![Action::None; policy.len()];
 
@@ -521,14 +515,16 @@ impl World {
                             );
                         }
 
-                        let mut target = 0;
+                        let mut optimal = 0;
                         for i in 1..new_values.len() {
-                            if new_values[i] > new_values[target] {
-                                target = i;
+                            if new_values[i] > new_values[optimal] {
+                                optimal = i;
                             }
                         }
 
-                        Action::Move(DIRECTIONS[target])
+                        q_values[index] = new_values;
+
+                        Action::Move(DIRECTIONS[optimal])
                     }
                 };
             }
@@ -558,9 +554,9 @@ impl World {
         let mut q_values = vec![[0.0; 4]; self.area()];
 
         loop {
-            values =
-                self.policy_evaluation(discount, noise, epsilon, &policy, &values, &mut q_values);
-            let (temp, stable) = self.policy_improvement(discount, noise, &policy, &values);
+            values = self.policy_evaluation(discount, noise, epsilon, &policy, &values);
+            let (temp, stable) =
+                self.policy_improvement(discount, noise, &policy, &values, &mut q_values);
             policy = temp;
 
             if stable {

@@ -332,13 +332,13 @@ impl Core for Game {
                         self.noise,
                         &self.analysis.policy,
                         &self.analysis.values,
-                        &mut self.analysis.q_values,
                     );
                     let (temp, _) = self.world.policy_improvement(
                         self.discount,
                         self.noise,
                         &self.analysis.policy,
                         &self.analysis.values,
+                        &mut self.analysis.q_values
                     );
                     self.analysis.policy = temp;
                 }
