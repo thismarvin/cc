@@ -24,7 +24,7 @@ impl Game {
 
         let mut mode = String::from("value");
         let mut discount = 0.9;
-        let mut noise = 0.8;
+        let mut noise = 0.2;
         let mut epsilon = 0.0001;
         let mut path = String::new();
 

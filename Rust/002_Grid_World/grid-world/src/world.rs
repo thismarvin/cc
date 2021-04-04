@@ -183,7 +183,6 @@ impl World {
         if let Some(target) = self.exits.get(state.y * self.width + state.x) {
             return target.is_some();
         }
-
         false
     }
 
@@ -205,8 +204,8 @@ impl World {
             Action::Move(direction) => {
                 let moves = self.get_moves(direction);
                 let mut result = Vec::with_capacity(moves.len());
-                result.push((noise, Action::Move(moves[0])));
-                let remainder = (1.0 - noise) / (moves.len() as f32 - 1.0);
+                result.push(((1.0 - noise), Action::Move(moves[0])));
+                let remainder = noise / (moves.len() as f32 - 1.0);
                 for i in 1..moves.len() {
                     result.push((remainder, Action::Move(moves[i])));
                 }
