@@ -338,7 +338,7 @@ impl Core for Game {
                         self.noise,
                         &self.analysis.policy,
                         &self.analysis.values,
-                        &mut self.analysis.q_values
+                        &mut self.analysis.q_values,
                     );
                     self.analysis.policy = temp;
                 }
