@@ -15,6 +15,7 @@ pub struct Game {
     discount: f32,
     noise: f32,
     show_policy: bool,
+    target: f32,
     accumulator: f32,
 }
 
@@ -90,6 +91,7 @@ impl Game {
             discount,
             noise,
             show_policy: false,
+            target: 1. / 5.,
             accumulator: 0.0,
         }
     }
@@ -312,8 +314,8 @@ impl Core for Game {
 
         self.accumulator += r.get_frame_time();
 
-        if self.accumulator > 0.2 {
-            self.accumulator = 0.0;
+        if self.accumulator > self.target {
+            self.accumulator -= self.target;
 
             // Look so the following isn't technically correct; however, doing it like this makes the visualization cooler!
             match self.mode {
